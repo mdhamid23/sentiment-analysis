@@ -4,3 +4,4 @@ transformers
 pandas 
 torch
 scikit-learn
+langdetect

@@ -1,13 +1,14 @@
-from telegram.ext import Application, MessageHandler, filters
+from telegram.ext import Application, MessageHandler, filters,CommandHandler
 import credentials as cred
 import pandas as pd
-from transformers import AutoTokenizer, AutoModelForSequenceClassification,AutoModel,AdamW, get_scheduler
+from transformers import AutoTokenizer, AutoModelForSequenceClassification,AutoModel,AdamW, get_scheduler, pipeline
 import torch
 from torch.nn import functional as F
 from sklearn.model_selection import train_test_split
 from torch.nn import CrossEntropyLoss
 from tqdm import tqdm
 from sklearn.metrics import classification_report
+from langdetect import detect
 
 class TelegramBotProvider:
     def __init__(self):
@@ -22,64 +23,162 @@ class TelegramBotProvider:
         return self.bot_application
 
     def initialize_handlers(self):
-        print("Inside initialize_handlers...")
+        # Add command handlers
+        self.bot_application.add_handler(CommandHandler("menu", self.menu_command))
+        self.bot_application.add_handler(CommandHandler("help", self.help_command))
+        self.bot_application.add_handler(CommandHandler("about", self.about_command))
+        self.bot_application.add_handler(CommandHandler("config", self.config_command))
 
-        # Example message handler
+        # Add message handler for non-command messages
         message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message)
         self.bot_application.add_handler(message_handler)
 
         # Error handler (optional)
         self.bot_application.add_error_handler(self.handle_polling_error)
+    
+
+    async def menu_command(self, update, context):
+        """Handle /menu command."""
+        response = (
+            "<b>📋 Main Menu</b>\n\n"
+            "👋 Welcome to the bot! Choose an option below:\n\n"
+            "🔹 <b>/help</b> - Get assistance on how to use the bot 🆘\n"
+            "🔹 <b>/config</b> - View bot configurations ⚙️\n"
+            "🔹 <b>/about</b> - Learn more about this bot 🤖"
+        )
+        await update.message.reply_text(response, parse_mode='HTML', disable_web_page_preview=True)
+
+    async def help_command(self, update, context):
+        """Handle /help command."""
+        response = (
+            "<b>🆘 Help Guide</b>\n\n"
+            "💬 Simply send me a message in either:\n"
+            "   - Bangla 🇧🇩\n"
+            "   - English 🇬🇧\n\n"
+            "📊 I'll analyze the sentiment for you and reply with:\n"
+            "   - Positive 😊\n"
+            "   - Neutral 😐\n"
+            "   - Negative 😞\n\n"
+            "Feel free to experiment and explore!"
+        )
+        await update.message.reply_text(response, parse_mode='HTML', disable_web_page_preview=True)
+
+    async def about_command(self, update, context):
+        """Handle /about command."""
+        response = (
+            "<b>🤖 About This Bot</b>\n\n"
+            "🌟 This bot is designed to analyze sentiments in both <b>English</b> and <b>Bangla</b> text.\n\n"
+            "🛠️ Built using:\n"
+            "   - <b>Python</b> 🐍\n"
+            "   - <b>Pre-trained Language Model</b> 🤗\n"
+            "   - <b>Telegram Bot API</b> 📡\n\n"
+            "🚀 Feel free to explore its features and share your thoughts!"
+        )
+        await update.message.reply_text(response, parse_mode='HTML', disable_web_page_preview=True)
+
+
+    async def config_command(self, update, context):
+        """Handle /config command."""
+        response = (
+            "<b><i>⚙️ Bot Configurations</i></b>\n\n"
+            "🌟 Welcome to the Bilingual Sentiment Analysis Bot! 🌟\n\n"
+            "🔍 This bot analyzes sentiments in both <b>English</b> and <b>Bangla</b> text.\n\n"
+            "🌐 <b>Bangla Sentiment Analysis</b>\n"
+            "   - Powered by <b>sagorsarker/bangla-bert-base</b> 🛠️\n"
+            "   - Fine-tuned with a Bangla sentiment dataset 📊\n\n"
+            "🌐 <b>English Sentiment Analysis</b>\n"
+            "   - Uses <b>distilbert-base-uncased-finetuned-sst-2-english</b> 🛠️\n"
+            "   - Delivers state-of-the-art results 🌟\n\n"
+            "✨ Enjoy using the bot and let us know your feedback! 📝"
+        )
+        await update.message.reply_text(response, parse_mode='HTML', disable_web_page_preview=True)
+
 
     async def on_message(self, update, context):
         """Handle incoming messages."""
-        response = await self.process_text(update.message.text)
-        await update.message.reply_text(response)
-        self.fine_tuning_model()
+        processing_message = await update.message.reply_text(
+        "⏳ Processing your message, please wait...",
+        parse_mode="HTML"
+    )
+        response = ''
+        lang_code = detect(update.message.text)
+        print("Detected language: ", lang_code)
+        if lang_code == "bn":  # Bangla
+            sentiment = await self.process_bangla_text(update.message.text)
+            response = "The Text Seems "+sentiment  + "!"
+        else:
+            sentiment = await self.process_english_text(update.message.text)
+            response = "The Text Seems "+sentiment  + "!"
+        
+        #! Delete the "processing" message
+        await context.bot.delete_message(
+            chat_id=update.message.chat_id,
+            message_id=processing_message.message_id
+        )
+        
+        # await update.message.reply_text(response)
+        await update.message.reply_text(
+        response,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_to_message_id=update.message.message_id  # Reference the original message
+    )
+
+        #! Only run for training the bangla model
+        # self.fine_tuning_model()
 
     async def handle_polling_error(self, update, context):
         """Handle errors."""
         print(f"Polling error: {context.error}")
 
 
+    async def process_bangla_text(self, text):
+        # Load the trained model and tokenizer
+        model_path = "bangla-sentiment-model"  # Replace with your folder path
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        model = AutoModelForSequenceClassification.from_pretrained(model_path)
 
-    async def process_text(self, text):
-         # Step 4: Load the Pre-trained Model for Sentiment Analysis
-        # Load tokenizer and model
-        model_name = "sagorsarker/bangla-bert-base"
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModel.from_pretrained(model_name)
-        # Step 5: Create a Sentiment Analysis Pipeline
-        sentences = []
-        sentences.append(text)
-        # sentences = ["আমি খুবই খুশি।", "আজকের দিনটি ভালো ছিল না।"]
-        print("the sentence is: ", sentences)
-        tokens = tokenizer(sentences, padding=True, truncation=True, max_length=128, return_tensors="pt")
+        # Move model to the appropriate device (GPU or CPU)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        sentiment = self.predict_sentiment(text, model, tokenizer, device)
+        
+        return sentiment
 
-        predictions = None
+    async def process_english_text(self, text):
+        # Load the sentiment analysis pipeline
+        sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+        result = sentiment_analyzer(text)
+        print(f"Text: {text}\nSentiment: {result[0]['label']}, Score: {result[0]['score']}\n")
+        sentiment = ''
+        if result[0]['label'] == 'POSITIVE':
+            sentiment = 'Positive'
+        elif result[0]['label'] == 'NEGATIVE':
+            sentiment = 'Negative'
+        else:
+            sentiment = 'Neutral'
+        return sentiment
+
+    def predict_sentiment(self,text, model, tokenizer, device):
+        # Tokenize the input text
+        encoding = tokenizer(
+            text,
+            truncation=True,
+            padding=True,
+            max_length=128,
+            return_tensors="pt"
+        ).to(device)  # Move tensors to the same device as the model
+
+        # Perform inference
+        model.eval()
         with torch.no_grad():
-            predictions = model(**tokens)
-            # predictions = torch.argmax(outputs.logits, dim=-1)
-        embeddings = predictions.last_hidden_state
-        print("the embeddings are: ", embeddings)
-        print(embeddings.shape)  # Shape: (batch_size, sequence_length, hidden_si
-        # print("the predictions are: ", predictions)
-        cls_embeddings = embeddings[:, 0, :]  # [batch_size, hidden_size]
+            outputs = model(**encoding)
+            logits = outputs.logits
+            prediction = torch.argmax(logits, dim=1).item()  # Get the predicted class index
 
-        # Placeholder for simple sentiment logic
-        # (You'd replace this with an actual classifier if needed.)
-        sentiment_scores = torch.rand((len(sentences), 3))  # Simulating output scores for 3 classes
-        sentiments = torch.argmax(F.softmax(sentiment_scores, dim=1), dim=1)
-
-        # Map predictions to sentiment labels
-        sentiment_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
-        predicted_sentiments = [sentiment_map[s.item()] for s in sentiments]
-
-        for sentence, sentiment in zip(sentences, predicted_sentiments):
-            print(f"Sentence: {sentence}\nPredicted Sentiment: {sentiment}\n")
-
-        return "The Text Seems "+sentiment  + "!"
-
+        # Map the prediction to sentiment
+        sentiment_map = {0: "Neutral", 1: "Positive", 2: "Negative"}
+        return sentiment_map[prediction]
 
     def fine_tuning_model(self):
         data_path = "Train.csv"  # Replace with the path to your dataset
@@ -113,7 +212,7 @@ class TelegramBotProvider:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
 
         # Load model with a classification head for 3 labels
-        model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=3)
+        model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=3,device_map = "auto")
 
 
         print("end of process 4...")
@@ -158,8 +257,8 @@ class TelegramBotProvider:
 
         # Scheduler
         num_epochs = 3
-        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True)
-        val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=16)
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=4, shuffle=True)
+        val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=4)
         num_training_steps = len(train_dataloader) * num_epochs
         lr_scheduler = get_scheduler("linear", optimizer=optimizer, num_warmup_steps=0, num_training_steps=num_training_steps)
 
@@ -175,6 +274,7 @@ class TelegramBotProvider:
         loss_fn = CrossEntropyLoss()
 
         for epoch in range(num_epochs):
+            print('training...')
             model.train()
             loop = tqdm(train_dataloader, leave=True)
             for batch in loop:
